@@ -76,6 +76,7 @@ vi.mock('sonner', () => ({
 }))
 
 const mockSourcesGet = vi.mocked(sourcesApi.get)
+const mockListInsights = vi.mocked(insightsApi.listForSource)
 const mockCreateInsight = vi.mocked(insightsApi.create)
 const mockWaitForCommand = vi.mocked(insightsApi.waitForCommand)
 const mockListTransformations = vi.mocked(transformationsApi.list)
@@ -122,6 +123,7 @@ async function startInsightGeneration() {
 describe('SourceDetailContent', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockListInsights.mockResolvedValue([])
     mockListTransformations.mockResolvedValue([{
       id: 'transformation:summary',
       title: 'Summary',
@@ -258,5 +260,36 @@ describe('SourceDetailContent', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Model ran out of memory')
     })
+  })
+
+  it('does not apply terminal effects when unmounted during the final refresh', async () => {
+    mockSourcesGet.mockResolvedValue(loadedSource)
+    let resolveRefresh!: (value: Awaited<ReturnType<typeof insightsApi.listForSource>>) => void
+    mockListInsights
+      .mockResolvedValueOnce([])
+      .mockReturnValueOnce(new Promise(resolve => {
+        resolveRefresh = resolve
+      }))
+    mockCreateInsight.mockResolvedValue({
+      status: 'pending',
+      message: 'started',
+      source_id: loadedSource.id,
+      transformation_id: 'transformation:summary',
+      command_id: 'job-1',
+    })
+    mockWaitForCommand.mockResolvedValue({
+      job_id: 'job-1',
+      status: 'failed',
+      error_message: 'Stale failure',
+    })
+
+    const view = renderContent(undefined, loadedSource.id)
+    await startInsightGeneration()
+    await waitFor(() => expect(mockListInsights).toHaveBeenCalledTimes(2))
+
+    view.unmount()
+    await act(async () => resolveRefresh([]))
+
+    expect(toast.error).not.toHaveBeenCalledWith('Stale failure')
   })
 })

@@ -61,7 +61,7 @@ export const insightsApi = {
   },
 
   /**
-   * Poll command status until completed or failed.
+   * Poll command status until it reaches a terminal state.
    * Returns the terminal status, or null if polling is aborted or repeatedly errors.
    */
   waitForCommand: async (
@@ -77,14 +77,14 @@ export const insightsApi = {
       try {
         status = await insightsApi.getCommandStatus(commandId, signal)
         consecutiveErrors = 0
-      } catch (error) {
+      } catch {
         if (signal?.aborted) return null
-        console.error('Error checking command status:', error)
+        console.error('Error checking command status')
         consecutiveErrors += 1
         if (consecutiveErrors >= 3) return null
       }
 
-      if (status && ['completed', 'failed', 'canceled', 'unknown'].includes(status.status)) {
+      if (status && ['completed', 'failed', 'canceled', 'error', 'unknown'].includes(status.status)) {
         if (status.status === 'failed' || status.status === 'canceled') {
           console.error('Command failed:', status.error_message)
         }

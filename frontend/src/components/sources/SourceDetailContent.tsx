@@ -191,6 +191,7 @@ function SourceDetailContentInner({
           if (controller.signal.aborted) return
 
           await fetchInsights()
+          if (controller.signal.aborted) return
           // Invalidate sources queries so notebook page refreshes with updated insights_count
           queryClient.invalidateQueries({ queryKey: ['sources'] })
           if (status?.status !== 'completed') {
