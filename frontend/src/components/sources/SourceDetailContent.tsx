@@ -166,35 +166,38 @@ function SourceDetailContentInner({
       return
     }
 
+    insightPollingRef.current?.abort()
+    const controller = new AbortController()
+    insightPollingRef.current = controller
+
     try {
       setCreatingInsight(true)
       const response = await insightsApi.create(sourceId, {
         transformation_id: selectedTransformation
       })
+      if (controller.signal.aborted) return
+
       // Show toast for async operation
       toast.success(t('sources.insightGenerationStarted'))
       setSelectedTransformation('')
 
       // Poll for command completion if we have a command_id
       if (response.command_id) {
-        insightPollingRef.current?.abort()
-        const controller = new AbortController()
-        insightPollingRef.current = controller
-
         // Poll in background (don't block UI)
         insightsApi.waitForCommand(response.command_id, {
           intervalMs: 2000,
           signal: controller.signal,
-        }).then(async success => {
+        }).then(async status => {
           if (controller.signal.aborted) return
 
           await fetchInsights()
           // Invalidate sources queries so notebook page refreshes with updated insights_count
           queryClient.invalidateQueries({ queryKey: ['sources'] })
-          if (!success) {
-            toast.error(t('common.error'))
+          if (status?.status !== 'completed') {
+            toast.error(status?.error_message || t('common.error'))
           }
         }).catch(err => {
+          if (controller.signal.aborted) return
           console.error('Error waiting for insight command:', err)
           toast.error(t('common.error'))
         }).finally(() => {
@@ -205,16 +208,26 @@ function SourceDetailContentInner({
       } else {
         // Fallback: refresh after delay if no command_id
         setTimeout(() => {
+          if (controller.signal.aborted) return
           void fetchInsights()
           // Also invalidate sources queries
           queryClient.invalidateQueries({ queryKey: ['sources'] })
+          if (insightPollingRef.current === controller) {
+            insightPollingRef.current = null
+          }
         }, 5000)
       }
     } catch (err) {
+      if (controller.signal.aborted) return
       console.error('Failed to create insight:', err)
       toast.error(t('common.error'))
+      if (insightPollingRef.current === controller) {
+        insightPollingRef.current = null
+      }
     } finally {
-      setCreatingInsight(false)
+      if (!controller.signal.aborted) {
+        setCreatingInsight(false)
+      }
     }
   }
 

@@ -19,14 +19,14 @@ describe('insightsApi.waitForCommand', () => {
     mockGet.mockImplementation(async () => ({
       data: {
         job_id: 'job-1',
-        status: mockGet.mock.calls.length > 60 ? 'completed' : 'running',
+        status: mockGet.mock.calls.length > 120 ? 'completed' : 'running',
       },
     }))
 
     await expect(
       insightsApi.waitForCommand('job-1', { intervalMs: 0 })
-    ).resolves.toBe(true)
-    expect(mockGet).toHaveBeenCalledTimes(61)
+    ).resolves.toMatchObject({ status: 'completed' })
+    expect(mockGet).toHaveBeenCalledTimes(121)
   })
 
   it('stops polling when aborted', async () => {
@@ -41,7 +41,25 @@ describe('insightsApi.waitForCommand', () => {
 
     controller.abort()
 
-    await expect(polling).resolves.toBe(false)
+    await expect(polling).resolves.toBeNull()
     expect(mockGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops polling when the job is unknown', async () => {
+    mockGet.mockResolvedValue({ data: { job_id: 'job-1', status: 'unknown' } })
+
+    await expect(
+      insightsApi.waitForCommand('job-1', { intervalMs: 0 })
+    ).resolves.toMatchObject({ status: 'unknown' })
+    expect(mockGet).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops after three consecutive status errors', async () => {
+    mockGet.mockRejectedValue(new Error('status unavailable'))
+
+    await expect(
+      insightsApi.waitForCommand('job-1', { intervalMs: 0 })
+    ).resolves.toBeNull()
+    expect(mockGet).toHaveBeenCalledTimes(3)
   })
 })

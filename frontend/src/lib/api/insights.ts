@@ -62,29 +62,33 @@ export const insightsApi = {
 
   /**
    * Poll command status until completed or failed.
-   * Returns true if completed successfully, false if failed.
+   * Returns the terminal status, or null if polling is aborted or repeatedly errors.
    */
   waitForCommand: async (
     commandId: string,
     options?: { intervalMs?: number; signal?: AbortSignal }
-  ): Promise<boolean> => {
+  ): Promise<CommandJobStatusResponse | null> => {
     const intervalMs = options?.intervalMs ?? 2000 // Default 2 seconds
     const signal = options?.signal
+    let consecutiveErrors = 0
 
     while (!signal?.aborted) {
+      let status: CommandJobStatusResponse | undefined
       try {
-        const status = await insightsApi.getCommandStatus(commandId, signal)
-        if (status.status === 'completed') {
-          return true
-        }
+        status = await insightsApi.getCommandStatus(commandId, signal)
+        consecutiveErrors = 0
+      } catch (error) {
+        if (signal?.aborted) return null
+        console.error('Error checking command status:', error)
+        consecutiveErrors += 1
+        if (consecutiveErrors >= 3) return null
+      }
+
+      if (status && ['completed', 'failed', 'canceled', 'unknown'].includes(status.status)) {
         if (status.status === 'failed' || status.status === 'canceled') {
           console.error('Command failed:', status.error_message)
-          return false
         }
-      } catch (error) {
-        if (signal?.aborted) return false
-        console.error('Error checking command status:', error)
-        // Continue polling on error
+        return status
       }
 
       await new Promise<void>(resolve => {
@@ -105,6 +109,6 @@ export const insightsApi = {
       })
     }
 
-    return false
+    return null
   }
 }
