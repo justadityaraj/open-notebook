@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { MarkdownRenderer } from '@/components/ui/markdown-renderer'
 import { sourcesApi } from '@/lib/api/sources'
@@ -114,6 +114,7 @@ function SourceDetailContentInner({
   const [selectedInsight, setSelectedInsight] = useState<SourceInsightResponse | null>(null)
   const [insightToDelete, setInsightToDelete] = useState<string | null>(null)
   const [deletingInsight, setDeletingInsight] = useState(false)
+  const insightPollingRef = useRef<AbortController | null>(null)
 
   // A 404 means the source was deleted (e.g. a dangling chat/ask reference) —
   // handled by the shared "content no longer exists" state. The global query
@@ -157,6 +158,8 @@ function SourceDetailContentInner({
     }
   }, [fetchInsights, fetchTransformations, sourceId])
 
+  useEffect(() => () => insightPollingRef.current?.abort(), [])
+
   const createInsight = async () => {
     if (!selectedTransformation) {
       toast.error(t('sources.selectTransformation'))
@@ -174,18 +177,30 @@ function SourceDetailContentInner({
 
       // Poll for command completion if we have a command_id
       if (response.command_id) {
+        insightPollingRef.current?.abort()
+        const controller = new AbortController()
+        insightPollingRef.current = controller
+
         // Poll in background (don't block UI)
         insightsApi.waitForCommand(response.command_id, {
-          maxAttempts: 120, // Up to 4 minutes (120 * 2s)
-          intervalMs: 2000
-        }).then(success => {
-          if (success) {
-            void fetchInsights()
-            // Invalidate sources queries so notebook page refreshes with updated insights_count
-            queryClient.invalidateQueries({ queryKey: ['sources'] })
+          intervalMs: 2000,
+          signal: controller.signal,
+        }).then(async success => {
+          if (controller.signal.aborted) return
+
+          await fetchInsights()
+          // Invalidate sources queries so notebook page refreshes with updated insights_count
+          queryClient.invalidateQueries({ queryKey: ['sources'] })
+          if (!success) {
+            toast.error(t('common.error'))
           }
         }).catch(err => {
           console.error('Error waiting for insight command:', err)
+          toast.error(t('common.error'))
+        }).finally(() => {
+          if (insightPollingRef.current === controller) {
+            insightPollingRef.current = null
+          }
         })
       } else {
         // Fallback: refresh after delay if no command_id

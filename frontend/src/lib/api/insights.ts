@@ -52,9 +52,10 @@ export const insightsApi = {
     await apiClient.delete(`/insights/${insightId}`)
   },
 
-  getCommandStatus: async (commandId: string) => {
+  getCommandStatus: async (commandId: string, signal?: AbortSignal) => {
     const response = await apiClient.get<CommandJobStatusResponse>(
-      `/commands/jobs/${commandId}`
+      `/commands/jobs/${commandId}`,
+      { signal }
     )
     return response.data
   },
@@ -65,14 +66,14 @@ export const insightsApi = {
    */
   waitForCommand: async (
     commandId: string,
-    options?: { maxAttempts?: number; intervalMs?: number }
+    options?: { intervalMs?: number; signal?: AbortSignal }
   ): Promise<boolean> => {
-    const maxAttempts = options?.maxAttempts ?? 60 // Default 60 attempts
     const intervalMs = options?.intervalMs ?? 2000 // Default 2 seconds
+    const signal = options?.signal
 
-    for (let i = 0; i < maxAttempts; i++) {
+    while (!signal?.aborted) {
       try {
-        const status = await insightsApi.getCommandStatus(commandId)
+        const status = await insightsApi.getCommandStatus(commandId, signal)
         if (status.status === 'completed') {
           return true
         }
@@ -80,16 +81,30 @@ export const insightsApi = {
           console.error('Command failed:', status.error_message)
           return false
         }
-        // Still running, wait and retry
-        await new Promise(resolve => setTimeout(resolve, intervalMs))
       } catch (error) {
+        if (signal?.aborted) return false
         console.error('Error checking command status:', error)
         // Continue polling on error
-        await new Promise(resolve => setTimeout(resolve, intervalMs))
       }
+
+      await new Promise<void>(resolve => {
+        if (signal?.aborted) {
+          resolve()
+          return
+        }
+
+        const onAbort = () => {
+          clearTimeout(timeout)
+          resolve()
+        }
+        const timeout = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve()
+        }, intervalMs)
+        signal?.addEventListener('abort', onAbort, { once: true })
+      })
     }
-    // Timeout
-    console.warn('Command polling timed out')
+
     return false
   }
 }
